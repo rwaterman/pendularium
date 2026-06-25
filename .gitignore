@@ -1,0 +1,4 @@
+.build/
+.swiftpm/
+pendularium-*.png
+.DS_Store
