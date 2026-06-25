@@ -13,6 +13,19 @@ func makePerspective(fovYRadians: Float, aspect: Float, near: Float, far: Float)
     ))
 }
 
+/// Right-handed orthographic projection (centered) with a [0, 1] depth range (Metal convention).
+func makeOrthographic(halfWidth: Float, halfHeight: Float, near: Float, far: Float) -> simd_float4x4 {
+    let sx = 1 / halfWidth
+    let sy = 1 / halfHeight
+    let sz = 1 / (near - far)
+    return simd_float4x4(columns: (
+        SIMD4<Float>(sx, 0, 0, 0),
+        SIMD4<Float>(0, sy, 0, 0),
+        SIMD4<Float>(0, 0, sz, 0),
+        SIMD4<Float>(0, 0, near * sz, 1)
+    ))
+}
+
 /// Right-handed look-at view matrix.
 func makeLookAt(eye: SIMD3<Float>, center: SIMD3<Float>, up: SIMD3<Float>) -> simd_float4x4 {
     let z = normalize(eye - center)

@@ -10,6 +10,8 @@ struct LaunchOptions {
     var seedWasGiven: Bool
     var autoshot: (time: Double, url: URL)?
     var trailMemoryMB: Int?
+    var twoD: Bool
+    var colorMode: ColorMode
 }
 
 func parseOptions() -> LaunchOptions {
@@ -17,6 +19,8 @@ func parseOptions() -> LaunchOptions {
     var seedGiven = false
     var autoshot: (time: Double, url: URL)?
     var memMB: Int?
+    var twoD = false
+    var colorMode: ColorMode = .speed
 
     let args = Array(CommandLine.arguments.dropFirst())
     var i = 0
@@ -30,13 +34,28 @@ func parseOptions() -> LaunchOptions {
             }
         case "--mem-mb":
             if i + 1 < args.count, let v = Int(args[i + 1]) { memMB = v; i += 1 }
+        case "--2d":
+            twoD = true
+        case "--color":
+            if i + 1 < args.count {
+                switch args[i + 1] {
+                case "speed": colorMode = .speed
+                case "identity": colorMode = .identity
+                case "phase": colorMode = .phase
+                default: break
+                }
+                i += 1
+            }
         case "--help", "-h":
             print("""
             pendularium — a field of chaotic double pendulums painting a fractal-like image.
               --seed <uint64>          reproduce a run's initial conditions
               --autoshot <sec> <path>  render for <sec>, save a PNG, then quit
               --mem-mb <int>           trail memory cap (default 192)
-            Controls: drag = orbit, scroll = zoom, S = screenshot, Q = quit.
+              --2d                     start in 2D mode
+              --color <speed|identity|phase>   start color mode
+            Controls: drag/scroll = move, D = 2D/3D, C = color mode, Space = pause,
+                      S = screenshot, Q = quit. Pauses automatically once at the limit.
             """)
             exit(0)
         default:
@@ -44,7 +63,8 @@ func parseOptions() -> LaunchOptions {
         }
         i += 1
     }
-    return LaunchOptions(seed: seed, seedWasGiven: seedGiven, autoshot: autoshot, trailMemoryMB: memMB)
+    return LaunchOptions(seed: seed, seedWasGiven: seedGiven, autoshot: autoshot,
+                         trailMemoryMB: memMB, twoD: twoD, colorMode: colorMode)
 }
 
 // MARK: - View (input + Metal surface)
@@ -57,6 +77,9 @@ final class PendulumView: MTKView {
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "s": renderer?.requestScreenshot()
         case "q": NSApp.terminate(nil)
+        case "d": renderer?.toggleDimension()
+        case "c": renderer?.cycleColorMode()
+        case " ": renderer?.togglePause()
         default: super.keyDown(with: event)
         }
     }
@@ -96,7 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.preferredFramesPerSecond = 60
         view.framebufferOnly = false   // allow screenshot readback
 
-        renderer = Renderer(view: view, config: config, seed: options.seed, autoshot: options.autoshot)
+        renderer = Renderer(view: view, config: config, seed: options.seed, autoshot: options.autoshot,
+                            startTwoD: options.twoD, startColor: options.colorMode)
         view.delegate = renderer
         view.renderer = renderer
 
@@ -113,9 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let seed = options.seed
         renderer.onStats = { [weak self] s in
             self?.hud.stringValue = String(
-                format: "pendulums %d   segments %d   cpu %.1fms   gpu %.1fms   %@%@\nseed %llu   drag=orbit scroll=zoom  S=shot  Q=quit",
-                s.active, s.segments, s.cpuMs, s.gpuMs, s.phase.rawValue,
-                s.trailFull ? " (trail full)" : "", seed)
+                format: "[%@]  color:%@   pendulums %d   segments %d   cpu %.1fms gpu %.1fms   %@\ndrag/scroll=move  D=2D/3D  C=color  Space=pause  S=shot  Q=quit   seed %llu",
+                s.twoD ? "2D" : "3D", s.colorMode, s.active, s.segments,
+                s.cpuMs, s.gpuMs, s.phase.rawValue, seed)
         }
 
         window = NSWindow(contentRect: frame,
@@ -128,6 +152,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeFirstResponder(view)
 
         NSApp.activate(ignoringOtherApps: true)
+
+        // Headless capture: drive rendering ourselves into an offscreen texture rather than relying
+        // on the display-link/drawable (which stall when the display sleeps).
+        if options.autoshot != nil {
+            view.isPaused = true
+            view.enableSetNeedsDisplay = false
+            DispatchQueue.main.async { self.renderer.runAutoshotAndExit(width: 1600, height: 1000) }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

@@ -17,8 +17,10 @@ struct Config {
 
     // Color
     var speedScale: Float = 6.5      // bob-2 speed mapped to [0,1] as speed/speedScale
-    var trailAlpha: Float = 0.09     // additive weight of accumulated trail segments
-    var armAlpha: Float = 0.9        // brighter live arms on top
+    var trailAlpha: Float = 0.05     // per-segment weight accumulated into the HDR target
+    var armAlpha: Float = 0.5        // live arms
+    var exposure: Float = 1.0        // HDR exposure before tone mapping
+    var saturation: Float = 1.45     // saturation boost after tone mapping
 
     // Growth (grow-to-budget)
     var maxPendulums: Int = 120_000  // hard ceiling (also sizes the live-arm buffer)
@@ -31,6 +33,7 @@ struct Config {
     // Camera
     var cameraRadius: Float = 130
     var orbitRateRadPerSec: Float = 0.07
+    var orthoHalfHeight: Float = 42  // vertical half-extent framed by the 2D orthographic view
 
     var trailVertexCapacity: Int { (trailMemoryMB * 1024 * 1024) / MemoryLayout<TrailVertex>.stride }
 }

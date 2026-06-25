@@ -5,11 +5,24 @@ import simd
 /// so the per-pendulum integration can run lock-free across CPU cores via `concurrentPerform`.
 /// Each pendulum swings in a plane parallel to world XY; its pivot's Z places it in a depth layer.
 final class Simulation {
+    /// Per-run smooth field that seeds initial conditions coherently: neighboring pendulums start
+    /// from nearly the same angle, so the field begins ordered and chaos shatters it over time.
+    private struct Field {
+        var k1: SIMD3<Float>; var phi1: Float   // spatial frequency + phase for θ1
+        var k2: SIMD3<Float>; var phi2: Float   // …for θ2
+        var amp: Float                          // angle amplitude
+        var kh: SIMD3<Float>; var phih: Float   // …for identity hue
+        var noise: Float                        // per-pendulum jitter on top of the field
+    }
+
     let capacity: Int
     private let config: Config
     private let baseSeed: UInt64
+    private let field: Field
 
     private(set) var active: Int = 0
+    /// 2D mode flattens every pendulum into the z=0 plane.
+    private(set) var twoD: Bool = false
 
     // State
     private let t1, t2, w1, w2: UnsafeMutablePointer<Float>
@@ -21,12 +34,24 @@ final class Simulation {
     private let b1X, b1Y: UnsafeMutablePointer<Float>       // world bob-1 (z = pivZ)
     private let b2X, b2Y: UnsafeMutablePointer<Float>       // world bob-2 / tip
     private let prevB2X, prevB2Y: UnsafeMutablePointer<Float> // last appended tip
-    private let speed: UnsafeMutablePointer<Float>          // |v| of bob-2
+    private let speed: UnsafeMutablePointer<Float>          // |v| of bob-2 (normalized)
+    private let hue: UnsafeMutablePointer<Float>            // per-pendulum random hue [0,1)
 
     init(config: Config, seed: UInt64) {
         self.config = config
         self.capacity = config.maxPendulums
         self.baseSeed = seed
+
+        var fr = SplitMix64(seed: seed ^ 0x5EED_F1E1_D000_0001)
+        func freq() -> SIMD3<Float> {
+            SIMD3(fr.float(-0.12, 0.12), fr.float(-0.12, 0.12), fr.float(-0.12, 0.12))
+        }
+        self.field = Field(k1: freq(), phi1: fr.float(0, 2 * .pi),
+                           k2: freq(), phi2: fr.float(0, 2 * .pi),
+                           amp: .pi,
+                           kh: freq() * 1.4, phih: fr.float(0, 1),
+                           noise: 0.06)
+
         let cap = config.maxPendulums
         func alloc() -> UnsafeMutablePointer<Float> {
             let p = UnsafeMutablePointer<Float>.allocate(capacity: cap)
@@ -37,14 +62,21 @@ final class Simulation {
         l1 = alloc(); l2 = alloc(); m1 = alloc(); m2 = alloc()
         pivX = alloc(); pivY = alloc(); pivZ = alloc(); e0 = alloc()
         b1X = alloc(); b1Y = alloc(); b2X = alloc(); b2Y = alloc()
-        prevB2X = alloc(); prevB2Y = alloc(); speed = alloc()
+        prevB2X = alloc(); prevB2Y = alloc(); speed = alloc(); hue = alloc()
     }
 
     deinit {
         for p in [t1, t2, w1, w2, l1, l2, m1, m2, pivX, pivY, pivZ, e0,
-                  b1X, b1Y, b2X, b2Y, prevB2X, prevB2Y, speed] {
+                  b1X, b1Y, b2X, b2Y, prevB2X, prevB2Y, speed, hue] {
             p.deallocate()
         }
+    }
+
+    /// Clear the field and switch dimension. Pendulums re-initialize deterministically (same
+    /// per-index seeds) on the next `spawn`, laid out for the chosen mode.
+    func reset(twoD: Bool) {
+        active = 0
+        self.twoD = twoD
     }
 
     /// Activate pendulums up to `target`, deterministically from the seed + index.
@@ -62,13 +94,20 @@ final class Simulation {
             // so the field reads as an organic cloud rather than a hard-edged box.
             let px = (r.float01() - r.float01()) * config.spreadX
             let py = (r.float01() - r.float01()) * config.spreadY
-            let pz = (r.float01() - r.float01()) * config.spreadZ
-            let a1 = r.float(-.pi, .pi)
-            let a2 = r.float(-.pi, .pi)
+            let pz = twoD ? 0 : (r.float01() - r.float01()) * config.spreadZ
+            let p = SIMD3<Float>(px, py, pz)
+
+            // Coherent seeding: initial angles are a smooth function of position + tiny noise, so
+            // neighbors start nearly identical and chaos amplifies the differences over time.
+            let a1 = field.amp * sin(simd_dot(field.k1, p) + field.phi1) + r.float(-field.noise, field.noise)
+            let a2 = field.amp * sin(simd_dot(field.k2, p) + field.phi2) + r.float(-field.noise, field.noise)
+            let hueRaw = simd_dot(field.kh, p) + field.phih
+            let hueVal = hueRaw - floor(hueRaw)
 
             t1[i] = a1; t2[i] = a2; w1[i] = 0; w2[i] = 0
             l1[i] = len1; l2[i] = len2; m1[i] = mass1; m2[i] = mass2
             pivX[i] = px; pivY[i] = py; pivZ[i] = pz
+            hue[i] = hueVal
             e0[i] = Simulation.energy(a1, a2, 0, 0, mass1, mass2, len1, len2, g)
 
             let bx1 = px + len1 * sin(a1)
@@ -151,25 +190,29 @@ final class Simulation {
     func emitGeometry(into trails: TrailBuffer, arms: UnsafeMutablePointer<TrailVertex>,
                       trailAlpha: Float, armAlpha: Float, allowTrailGrowth: Bool) {
         let n = active
+        let inv2pi = Float(1.0 / (2.0 * Double.pi))
         for i in 0..<n {
             let z = pivZ[i]
             let s = speed[i]
+            let h = hue[i]
+            let angRaw = t2[i] * inv2pi
+            let ang = angRaw - floor(angRaw)   // swing angle wrapped to [0,1)
             let p2 = SIMD3<Float>(b2X[i], b2Y[i], z)
 
             if allowTrailGrowth {
-                let c = Colormap.packed(s, alpha: trailAlpha)
-                trails.appendSegment(SIMD3<Float>(prevB2X[i], prevB2Y[i], z), p2, color: c)
+                let a = packAttribs(speed: s, hue: h, angle: ang, alpha: trailAlpha)
+                trails.appendSegment(SIMD3<Float>(prevB2X[i], prevB2Y[i], z), p2, attribs: a)
             }
             prevB2X[i] = p2.x; prevB2Y[i] = p2.y
 
-            let ca = Colormap.packed(s, alpha: armAlpha)
+            let aa = packAttribs(speed: s, hue: h, angle: ang, alpha: armAlpha)
             let piv = SIMD3<Float>(pivX[i], pivY[i], z)
             let b1 = SIMD3<Float>(b1X[i], b1Y[i], z)
             let base = i * 4
-            arms[base + 0] = TrailVertex(piv, ca)
-            arms[base + 1] = TrailVertex(b1, ca)
-            arms[base + 2] = TrailVertex(b1, ca)
-            arms[base + 3] = TrailVertex(p2, ca)
+            arms[base + 0] = TrailVertex(piv, attribs: aa)
+            arms[base + 1] = TrailVertex(b1, attribs: aa)
+            arms[base + 2] = TrailVertex(b1, attribs: aa)
+            arms[base + 3] = TrailVertex(p2, attribs: aa)
         }
     }
 

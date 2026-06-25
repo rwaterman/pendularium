@@ -22,11 +22,14 @@ final class TrailBuffer {
 
     var isFull: Bool { count + 2 > capacity }
 
+    /// Clear the painting (used when toggling 2D/3D restarts accumulation).
+    func reset() { count = 0 }
+
     @inline(__always)
-    func appendSegment(_ a: SIMD3<Float>, _ b: SIMD3<Float>, color: UInt32) {
+    func appendSegment(_ a: SIMD3<Float>, _ b: SIMD3<Float>, attribs: UInt32) {
         guard count + 2 <= capacity else { return }
-        verts[count] = TrailVertex(a, color)
-        verts[count + 1] = TrailVertex(b, color)
+        verts[count] = TrailVertex(a, attribs: attribs)
+        verts[count + 1] = TrailVertex(b, attribs: attribs)
         count += 2
     }
 }
