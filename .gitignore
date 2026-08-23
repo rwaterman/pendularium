@@ -1,4 +1,8 @@
 .build/
 .swiftpm/
-pendularium-*.png
+DerivedData/
+*.xcuserstate
+.vscode/
 .DS_Store
+pendularium-*.png
+.remember/
