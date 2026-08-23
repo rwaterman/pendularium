@@ -12,6 +12,8 @@ struct LaunchOptions {
     var trailMemoryMB: Int?
     var twoD: Bool
     var colorMode: ColorMode
+    var record: Recorder.Output?
+    var seconds: Double?
 }
 
 func parseOptions() -> LaunchOptions {
@@ -21,6 +23,8 @@ func parseOptions() -> LaunchOptions {
     var memMB: Int?
     var twoD = false
     var colorMode: ColorMode = .speed
+    var record: Recorder.Output?
+    var seconds: Double?
 
     let args = Array(CommandLine.arguments.dropFirst())
     var i = 0
@@ -32,6 +36,12 @@ func parseOptions() -> LaunchOptions {
             if i + 2 < args.count, let t = Double(args[i + 1]) {
                 autoshot = (t, URL(fileURLWithPath: args[i + 2])); i += 2
             }
+        case "--record":
+            if i + 1 < args.count { record = .video(URL(fileURLWithPath: args[i + 1])); i += 1 }
+        case "--gif":
+            if i + 1 < args.count { record = .gif(URL(fileURLWithPath: args[i + 1])); i += 1 }
+        case "--seconds":
+            if i + 1 < args.count, let v = Double(args[i + 1]) { seconds = v; i += 1 }
         case "--mem-mb":
             if i + 1 < args.count, let v = Int(args[i + 1]) { memMB = v; i += 1 }
         case "--2d":
@@ -51,6 +61,9 @@ func parseOptions() -> LaunchOptions {
             pendularium — a field of chaotic double pendulums painting a fractal-like image.
               --seed <uint64>          reproduce a run's initial conditions
               --autoshot <sec> <path>  render for <sec>, save a PNG, then quit
+              --record <path.mp4>      render the scripted demo to an H.264 video, then quit
+              --gif <path.gif>         render the scripted demo to a looping GIF, then quit
+              --seconds <n>            demo length for --record (default 25) / --gif (default 10)
               --mem-mb <int>           trail memory cap (default 192)
               --2d                     start in 2D mode
               --color <speed|identity|phase>   start color mode
@@ -64,7 +77,8 @@ func parseOptions() -> LaunchOptions {
         i += 1
     }
     return LaunchOptions(seed: seed, seedWasGiven: seedGiven, autoshot: autoshot,
-                         trailMemoryMB: memMB, twoD: twoD, colorMode: colorMode)
+                         trailMemoryMB: memMB, twoD: twoD, colorMode: colorMode,
+                         record: record, seconds: seconds)
 }
 
 // MARK: - View (input + Metal surface)
@@ -148,18 +162,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "Pendularium"
         window.contentView = view
         window.center()
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(view)
-
-        NSApp.activate(ignoringOtherApps: true)
 
         // Headless capture: drive rendering ourselves into an offscreen texture rather than relying
-        // on the display-link/drawable (which stall when the display sleeps).
-        if options.autoshot != nil {
+        // on the display-link/drawable (which stall when the display sleeps). No window is shown.
+        let headless = options.autoshot != nil || options.record != nil
+        if headless {
             view.isPaused = true
             view.enableSetNeedsDisplay = false
-            DispatchQueue.main.async { self.renderer.runAutoshotAndExit(width: 1600, height: 1000) }
+        } else {
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(view)
+            NSApp.activate(ignoringOtherApps: true)
         }
+
+        if options.autoshot != nil {
+            DispatchQueue.main.async { self.renderer.runAutoshotAndExit(width: 1600, height: 1000) }
+        } else if let output = options.record {
+            DispatchQueue.main.async { self.runRecordingAndExit(output) }
+        }
+    }
+
+    private func runRecordingAndExit(_ output: Recorder.Output) {
+        let seconds: Double
+        let width: Int, height: Int
+        let url: URL
+        switch output {
+        case .video(let u): seconds = options.seconds ?? 25; width = 1280; height = 800; url = u
+        case .gif(let u): seconds = options.seconds ?? 10; width = 640; height = 400; url = u
+        }
+        let ok = Recorder.run(renderer: renderer, output: output, seconds: seconds, width: width, height: height)
+        print("[pendularium] demo \(ok ? "saved" : "FAILED"): \(url.path)")
+        exit(ok ? 0 : 1)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

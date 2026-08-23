@@ -122,6 +122,16 @@ final class Simulation {
         active = limit
     }
 
+    /// World position of pendulum `i`'s tip (bob 2).
+    func tip(_ i: Int) -> SIMD3<Float> { SIMD3(b2X[i], b2Y[i], pivZ[i]) }
+
+    /// Relative drift of pendulum `i`'s total energy from its initial energy. Energy
+    /// renormalization in `step` keeps this near zero for arbitrarily long runs.
+    func energyDrift(_ i: Int) -> Float {
+        let e = Simulation.energy(t1[i], t2[i], w1[i], w2[i], m1[i], m2[i], l1[i], l2[i], config.gravity)
+        return abs(e - e0[i]) / max(1e-3, abs(e0[i]))
+    }
+
     /// Advance every active pendulum by one frame (subSteps × subDt), in parallel.
     func step() {
         let n = active

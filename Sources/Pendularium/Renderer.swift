@@ -127,6 +127,11 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     func requestScreenshot() { pendingKeyShot = true }
 
+    var stats: Stats {
+        Stats(active: sim.active, segments: trails.count / 2, cpuMs: emaCpuMs, gpuMs: emaGpuMs,
+              phase: phase, twoD: twoD, colorMode: colorMode.label)
+    }
+
     /// Cycle the color distribution. Pure uniform change → recolors the whole painting live.
     func cycleColorMode() {
         let all = ColorMode.allCases
@@ -286,40 +291,45 @@ final class Renderer: NSObject, MTKViewDelegate {
         cmd.present(drawable)
         cmd.commit()
 
-        onStats?(Stats(active: sim.active, segments: trails.count / 2,
-                       cpuMs: emaCpuMs, gpuMs: emaGpuMs, phase: phase,
-                       twoD: twoD, colorMode: colorMode.label))
+        onStats?(stats)
     }
 
     // MARK: - Headless capture (offscreen; works regardless of display sleep)
 
-    /// Step the simulation forward `time` seconds of frames, render the accumulated painting once
-    /// to an offscreen texture, write a PNG, and quit. Independent of the display link / drawable,
-    /// so `--autoshot` works even when the display is asleep or there is no window on screen.
-    func runAutoshotAndExit(width: Int, height: Int) {
-        guard let shot = autoshot else { return }
-        let frames = max(1, Int(shot.time * 60))
-        for _ in 0..<frames { advance(dt: 1.0 / 60.0, ring: 0) }
-
+    /// A CPU-readable BGRA8 render target for offscreen capture.
+    func makeOffscreenTarget(width: Int, height: Int) -> MTLTexture? {
         let td = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         td.usage = [.renderTarget, .shaderRead]
         td.storageMode = .shared
-        guard let tex = device.makeTexture(descriptor: td),
-              let cmd = queue.makeCommandBuffer() else {
-            print("[pendularium] autoshot FAILED: could not create offscreen target")
-            NSApp.terminate(nil); return
-        }
+        return device.makeTexture(descriptor: td)
+    }
 
+    /// Step the simulation `steps` frames (1/60 s each) and render the painting into `target`,
+    /// blocking until the GPU is done so the texture can be read back. Independent of the
+    /// display link / drawable, so it works when the display is asleep or there is no window.
+    func renderOffscreen(into target: MTLTexture, steps: Int) -> Bool {
+        for _ in 0..<steps { advance(dt: 1.0 / 60.0, ring: 0) }
+        guard let cmd = queue.makeCommandBuffer() else { return false }
         let finalRPD = MTLRenderPassDescriptor()
-        finalRPD.colorAttachments[0].texture = tex
+        finalRPD.colorAttachments[0].texture = target
         finalRPD.colorAttachments[0].loadAction = .dontCare
         finalRPD.colorAttachments[0].storeAction = .store
-
-        renderHDR(into: finalRPD, cmd: cmd, ring: 0, width: width, height: height)
+        renderHDR(into: finalRPD, cmd: cmd, ring: 0, width: target.width, height: target.height)
         cmd.commit()
         cmd.waitUntilCompleted()
+        return true
+    }
 
+    /// Step the simulation forward `time` seconds of frames, render the accumulated painting once
+    /// to an offscreen texture, write a PNG, and quit.
+    func runAutoshotAndExit(width: Int, height: Int) {
+        guard let shot = autoshot else { return }
+        guard let tex = makeOffscreenTarget(width: width, height: height),
+              renderOffscreen(into: tex, steps: max(1, Int(shot.time * 60))) else {
+            print("[pendularium] autoshot FAILED: could not render offscreen")
+            NSApp.terminate(nil); return
+        }
         let ok = Screenshot.writePNG(from: tex, to: shot.url)
         print("[pendularium] autoshot \(ok ? "saved" : "FAILED") [offscreen]: \(shot.url.path) " +
               "(active=\(sim.active), segments=\(trails.count / 2))")
