@@ -1,0 +1,132 @@
+{
+  "colorMode" : "speed",
+  "field" : {
+    "amp" : 3.1415925,
+    "k1" : [
+      0.00037104636,
+      0.06459049,
+      0.0279103
+    ],
+    "k2" : [
+      -0.0657464,
+      0.015999489,
+      0.053362317
+    ],
+    "kh" : [
+      0.15383904,
+      -0.14201985,
+      0.14807294
+    ],
+    "noise" : 0.06,
+    "phi1" : 4.1213784,
+    "phi2" : 1.5202534,
+    "phih" : 0.18208648
+  },
+  "lyapunovPerSecond" : 1.0503458,
+  "mode" : "3D",
+  "pendulums" : 34752,
+  "probePairs" : 64,
+  "probePerturbation" : 0.0001,
+  "samples" : [
+    {
+      "meanLogSeparation" : -9.211101,
+      "pendulums" : 192,
+      "sync" : 0.28715035,
+      "t" : 0
+    },
+    {
+      "meanLogSeparation" : -8.564206,
+      "pendulums" : 3072,
+      "sync" : 0.24243613,
+      "t" : 0.5
+    },
+    {
+      "meanLogSeparation" : -7.9917736,
+      "pendulums" : 5952,
+      "sync" : 0.10789,
+      "t" : 1
+    },
+    {
+      "meanLogSeparation" : -7.389215,
+      "pendulums" : 8832,
+      "sync" : 0.1077066,
+      "t" : 1.5
+    },
+    {
+      "meanLogSeparation" : -6.7207723,
+      "pendulums" : 11712,
+      "sync" : 0.11698608,
+      "t" : 2
+    },
+    {
+      "meanLogSeparation" : -6.4314857,
+      "pendulums" : 14592,
+      "sync" : 0.13322277,
+      "t" : 2.5
+    },
+    {
+      "meanLogSeparation" : -5.9825478,
+      "pendulums" : 17472,
+      "sync" : 0.13281,
+      "t" : 3
+    },
+    {
+      "meanLogSeparation" : -5.3687477,
+      "pendulums" : 20352,
+      "sync" : 0.13019831,
+      "t" : 3.5
+    },
+    {
+      "meanLogSeparation" : -4.7039666,
+      "pendulums" : 23232,
+      "sync" : 0.13835652,
+      "t" : 4
+    },
+    {
+      "meanLogSeparation" : -4.338098,
+      "pendulums" : 26112,
+      "sync" : 0.14032544,
+      "t" : 4.5
+    },
+    {
+      "meanLogSeparation" : -3.8169293,
+      "pendulums" : 28992,
+      "sync" : 0.14310838,
+      "t" : 5
+    },
+    {
+      "meanLogSeparation" : -3.2891288,
+      "pendulums" : 31872,
+      "sync" : 0.1488097,
+      "t" : 5.5
+    },
+    {
+      "meanLogSeparation" : -2.8349342,
+      "pendulums" : 34752,
+      "sync" : 0.14182353,
+      "t" : 6
+    }
+  ],
+  "seed" : 42,
+  "segments" : 6291456,
+  "simSeconds" : 6.016667,
+  "speedHistogram" : [
+    878,
+    1154,
+    1315,
+    1520,
+    1730,
+    1809,
+    1951,
+    2082,
+    2161,
+    2190,
+    2172,
+    2079,
+    2030,
+    1828,
+    1761,
+    8092
+  ],
+  "sync" : 0.14325024
+}

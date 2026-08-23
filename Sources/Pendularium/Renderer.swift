@@ -51,6 +51,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var twoD = false
     private var colorMode: ColorMode = .speed
     private var manualPaused = false
+    private var frame = 0
+    private let seed: UInt64
+    let report = RunReport()
 
     // Screenshots
     private var pendingKeyShot = false
@@ -64,6 +67,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         self.queue = queue
         self.config = config
         self.autoshot = autoshot
+        self.seed = seed
         self.camera = Camera(radius: config.cameraRadius, orthoHalfHeight: config.orthoHalfHeight)
 
         // Runtime-compiled shaders → two pipelines: additive lines into an HDR target, then a
@@ -154,7 +158,26 @@ final class Renderer: NSObject, MTKViewDelegate {
         manualPaused = false
         emaCpuMs = 0; emaGpuMs = 0
         phase = .growing
+        frame = 0
+        report.reset()
         for _ in 0..<Renderer.maxFramesInFlight { inFlight.signal() }
+    }
+
+    /// Write the run report (measurements + seed) as JSON.
+    func writeReport(to url: URL) -> Bool {
+        let doc = report.document(sim: sim, config: config, seed: seed, frame: frame,
+                                  segments: trails.count / 2, twoD: twoD, colorMode: colorMode)
+        let ok = RunReport.write(doc, to: url)
+        print("[pendularium] report \(ok ? "saved" : "FAILED"): \(url.path)")
+        return ok
+    }
+
+    /// Write the accumulated trail segments as a colored PLY line cloud (current color mode).
+    func exportPLY(to url: URL) -> Bool {
+        let verts = trails.buffer.contents().bindMemory(to: TrailVertex.self, capacity: trails.count)
+        let ok = PLYExport.write(vertices: verts, count: trails.count, mode: colorMode, to: url)
+        print("[pendularium] PLY \(ok ? "saved" : "FAILED"): \(url.path) (segments=\(trails.count / 2), color:\(colorMode.label))")
+        return ok
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -181,7 +204,11 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         let cpuStart = CACurrentMediaTime()
-        if running { sim.step() }
+        if running {
+            if frame % RunReport.sampleEveryFrames == 0 { report.sample(sim, frame: frame) }
+            sim.step()
+            frame += 1
+        }
         sim.emitGeometry(into: trails, arms: armsPtrs[ring],
                          trailAlpha: config.trailAlpha, armAlpha: config.armAlpha,
                          allowTrailGrowth: running)

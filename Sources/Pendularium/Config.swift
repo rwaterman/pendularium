@@ -30,6 +30,10 @@ struct Config {
     // Trail memory cap → "until it can't draw any more"
     var trailMemoryMB: Int = 192     // 192 MB / 16 B ≈ 12.6M vertices ≈ 6.3M segments
 
+    // Measurement probes (see Simulation.spawn / the run report)
+    var probePairs: Int = 64             // twin pairs among the first 2*probePairs pendulums
+    var probePerturbation: Float = 1e-4  // radians added to the twin's θ1
+
     // Camera
     var cameraRadius: Float = 130
     var orbitRateRadPerSec: Float = 0.07

@@ -4,6 +4,11 @@ A native macOS generative-art engine that paints a zoomed-out, fractal-like imag
 of **chaotic double pendulums** swinging in 3D. Every run is seeded differently, so no two images
 are alike. Built in Swift + Metal, runnable straight from the terminal.
 
+It is a fun visualizer first. It is also a small instrument: each of the three color modes is a
+measurement of the chaotic field, and `--report` writes those measurements as numbers — including
+a Lyapunov exponent estimated from twin pendulums seeded a ten-thousandth of a radian apart. The
+painting itself exports as a colored line cloud for Blender.
+
 ## Demo
 
 ![Ten seconds of a run: the 3D field grows, hits the trail memory cap, then recolors live by identity and phase](docs/media/demo.gif)
@@ -44,6 +49,53 @@ swift run -c release Pendularium --seed 42 --record demo.mp4
 
 ![A finished 3D painting](docs/example.png)
 
+## What it measures
+
+The color modes are three views of the same chaotic field, and the run report turns each into a
+number. `swift run -c release Pendularium --seed 42 --autoshot 12 out.png --report run.json`
+produces [`docs/report-seed42.json`](docs/report-seed42.json), which looks like this (abridged):
+
+```json
+{
+  "seed": 42,
+  "mode": "3D",
+  "pendulums": 34752,
+  "segments": 6291456,
+  "field": { "k1": [0.0004, 0.0646, 0.0279], "phi1": 4.12, "k2": [-0.0657, 0.016, 0.0534], "phi2": 1.52, "amp": 3.14, "noise": 0.06 },
+  "speedHistogram": [878, 1154, 1315, 1520, 1730, 1809, 1951, 2082, 2161, 2190, 2172, 2079, 2030, 1828, 1761, 8092],
+  "sync": 0.143,
+  "lyapunovPerSecond": 1.05,
+  "samples": [
+    { "t": 0,   "pendulums": 192,   "sync": 0.287, "meanLogSeparation": -9.21 },
+    { "t": 0.5, "pendulums": 3072,  "sync": 0.242, "meanLogSeparation": -8.56 },
+    { "t": 6,   "pendulums": 34752, "sync": 0.142, "meanLogSeparation": -2.83 }
+  ]
+}
+```
+
+| Color mode | What it paints | Report field |
+| ---------- | -------------- | ------------ |
+| **speed** | the energy distribution across the field | `speedHistogram` — 16 bins of normalized bob speed |
+| **phase** | who is swinging in sync | `sync` — the Kuramoto order parameter of the swing angles (1 = all in phase, 0 = uniform). Starts ordered (0.29 from the coherent seed), collapses within a second. |
+| **identity** | how neighboring trajectories diverge and mix | `meanLogSeparation` and `lyapunovPerSecond` — the first 64 even/odd pendulum pairs are **probe twins**, identical except for a 10⁻⁴ rad nudge. Their separation grows exponentially; the slope of its log before saturation is the largest Lyapunov exponent. Seed 42 gives ≈1.05/s: nearby trajectories separate e-fold every second. |
+
+`field` is the smooth seeding field (wave vectors and phases for θ1, θ2 and the identity hue), so
+a report plus `--seed` fully describes a run. Samples are taken every 0.5 s of simulated time
+while the field is growing. The 128 probe pendulums are part of the painting, indistinguishable
+among tens of thousands.
+
+## Export
+
+```sh
+swift run -c release Pendularium --seed 42 --autoshot 12 out.png --export-ply trails.ply
+```
+
+writes every trail segment as a binary PLY: vertices with the current color mode baked in, plus
+an edge per segment. It opens in Blender (File → Import → Stanford PLY; vertex colors come along),
+MeshLab, and CloudCompare. At the default 192 MB trail cap that is 12.6 M vertices and ~240 MB;
+use `--mem-mb` for something lighter. In the window, `P` exports and `R` writes a report, both
+to the working directory.
+
 ## Requirements
 
 - macOS 14 or later
@@ -69,6 +121,8 @@ saturating. A debug build works, it just saturates early.
 | `C`      | cycle color mode (speed → identity → phase)       |
 | `Space`  | pause / resume growth                             |
 | `S`      | save a PNG screenshot to the working dir          |
+| `R`      | write the run report (JSON) to the working dir    |
+| `P`      | export the trails as a colored PLY                |
 | `Q`      | quit                                              |
 
 ### Flags
@@ -82,7 +136,12 @@ saturating. A debug build works, it just saturates early.
 --record <path.mp4>      render the scripted demo to an H.264 video, then quit
 --gif <path.gif>         render the scripted demo to a looping GIF, then quit
 --seconds <n>            demo length for --record (default 25) / --gif (default 10)
+--report <path.json>     write the run report (measurements + seed) on exit
+--export-ply <path.ply>  write the trail segments as a colored PLY on exit
 ```
+
+`--report` and `--export-ply` describe whatever the run accumulated, so they combine with the
+window, `--autoshot`, and the demo modes alike.
 
 Example — deterministic capture in 2D phase mode:
 
@@ -104,8 +163,9 @@ modes have no GPU timing to gate on, so they grow at the maximum rate).
 swift test
 ```
 
-Tests cover the simulation (determinism, energy renormalization, 2D flattening), vertex packing,
-the PRNG, projection math, and the camera. None of them need a GPU, so they run on CI.
+Tests cover the simulation (determinism, energy renormalization, 2D flattening), the measurements
+(probe divergence, sync order, Lyapunov fit, report JSON), the PLY export and color ramps, vertex
+packing, the PRNG, projection math, and the camera. None of them need a GPU, so they run on CI.
 
 ## How it scales (toward millions)
 
@@ -126,9 +186,11 @@ drop-in swap.
 | `TrailBuffer.swift` | persistent append-only vertex buffer |
 | `Shaders.swift` | Metal source (runtime-compiled): line shader (per-vertex color modes) + tone-map |
 | `Recorder.swift` | scripted demo capture: H.264 via `AVAssetWriter`, GIF via ImageIO, HUD composite |
+| `Report.swift` | run report: sync order, speed histogram, probe divergence, Lyapunov fit, JSON |
+| `Export.swift` | CPU mirror of the shader color ramps; binary PLY writer |
 | `Screenshot.swift` | texture readback to `CGImage` / PNG |
 | `Camera.swift`, `Matrix.swift`, `Random.swift`, `Config.swift`, `Types.swift` | support |
-| `Tests/PendulariumTests` | simulation, packing, PRNG, matrix, and camera tests |
+| `Tests/PendulariumTests` | simulation, measurement, export, packing, PRNG, matrix, and camera tests |
 
 CI runs `swift build` and `swift test` on macOS, plus gitleaks, markdownlint, and a link check.
 
