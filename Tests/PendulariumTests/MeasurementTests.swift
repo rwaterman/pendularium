@@ -40,7 +40,7 @@ struct MeasurementTests {
             RunReport.Sample(t: Float($0) * 0.5, pendulums: 1, sync: 0, meanLogSeparation: -9 + 2 * Float($0) * 0.5)
         }
         #expect(abs(RunReport.lyapunov(samples)! - 2) < 1e-4)
-        #expect(RunReport.lyapunov(Array(samples.prefix(2))) == nil)
+        #expect(RunReport.lyapunov(Array(samples.prefix(3))) == nil)
         let saturated = samples.map { RunReport.Sample(t: $0.t, pendulums: 1, sync: 0, meanLogSeparation: 1) }
         #expect(RunReport.lyapunov(saturated) == nil)
     }

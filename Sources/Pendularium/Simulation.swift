@@ -27,6 +27,7 @@ final class Simulation {
     // State
     private let t1, t2, w1, w2: UnsafeMutablePointer<Float>
     private let t1_0, t2_0: UnsafeMutablePointer<Float>   // angles at spawn (probe twins)
+    private let spawnFrame: UnsafeMutablePointer<Int32>
     // Parameters
     private let l1, l2, m1, m2: UnsafeMutablePointer<Float>
     private let pivX, pivY, pivZ: UnsafeMutablePointer<Float>
@@ -61,6 +62,8 @@ final class Simulation {
         }
         t1 = alloc(); t2 = alloc(); w1 = alloc(); w2 = alloc()
         t1_0 = alloc(); t2_0 = alloc()
+        spawnFrame = UnsafeMutablePointer<Int32>.allocate(capacity: cap)
+        spawnFrame.initialize(repeating: 0, count: cap)
         l1 = alloc(); l2 = alloc(); m1 = alloc(); m2 = alloc()
         pivX = alloc(); pivY = alloc(); pivZ = alloc(); e0 = alloc()
         b1X = alloc(); b1Y = alloc(); b2X = alloc(); b2Y = alloc()
@@ -72,6 +75,7 @@ final class Simulation {
                   b1X, b1Y, b2X, b2Y, prevB2X, prevB2Y, speed, hue] {
             p.deallocate()
         }
+        spawnFrame.deallocate()
     }
 
     /// Clear the field and switch dimension. Pendulums re-initialize deterministically (same
@@ -82,7 +86,7 @@ final class Simulation {
     }
 
     /// Activate pendulums up to `target`, deterministically from the seed + index.
-    func spawn(upTo target: Int) {
+    func spawn(upTo target: Int, frame: Int = 0) {
         let limit = min(target, capacity)
         guard limit > active else { return }
         let g = config.gravity
@@ -120,6 +124,7 @@ final class Simulation {
 
             t1[i] = a1; t2[i] = a2; w1[i] = 0; w2[i] = 0
             t1_0[i] = a1; t2_0[i] = a2
+            spawnFrame[i] = Int32(frame)
             l1[i] = len1; l2[i] = len2; m1[i] = mass1; m2[i] = mass2
             pivX[i] = p.x; pivY[i] = p.y; pivZ[i] = pz
             hue[i] = hueVal
@@ -135,6 +140,24 @@ final class Simulation {
             speed[i] = 0
         }
         active = limit
+    }
+
+    // MARK: - Rows for data export
+
+    /// Index of the pendulum this one is a probe twin of, if any.
+    func twinOf(_ i: Int) -> Int? { i % 2 == 1 && i / 2 < config.probePairs ? i - 1 : nil }
+
+    /// Per-pendulum constants (the dimension table).
+    func pendulumRecord(_ i: Int) -> PendulumRecord {
+        PendulumRecord(id: i, spawnFrame: Int(spawnFrame[i]), pivot: SIMD3(pivX[i], pivY[i], pivZ[i]),
+                       l1: l1[i], l2: l2[i], m1: m1[i], m2: m2[i], theta1_0: t1_0[i], theta2_0: t2_0[i],
+                       hue: hue[i], energy: e0[i], twinOf: twinOf(i))
+    }
+
+    /// Per-pendulum state right now (the fact table).
+    func stateRecord(_ i: Int) -> StateRecord {
+        StateRecord(id: i, theta1: t1[i], theta2: t2[i], omega1: w1[i], omega2: w2[i],
+                    speed: speed[i], tip: SIMD3(b2X[i], b2Y[i], pivZ[i]))
     }
 
     // MARK: - Measurements (what the three color modes show, as numbers)

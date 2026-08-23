@@ -7,7 +7,7 @@ import AppKit
 /// CPU and GPU work to gate growth, and renders the trail + live-arm line buffers additively.
 final class Renderer: NSObject, MTKViewDelegate {
     enum Phase: String {
-        case growing = "GROW", saturated = "SATURATE", frozen = "FREEZE (at limit)", paused = "PAUSED"
+        case growing = "GROW", saturated = "SATURATE", fixed = "FIXED", frozen = "FREEZE (at limit)", paused = "PAUSED"
     }
 
     struct Stats {
@@ -53,14 +53,17 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var manualPaused = false
     private var frame = 0
     private let seed: UInt64
+    /// `--pendulums`: the whole population spawns at frame 0 and never grows.
+    private let fixedPopulation: Bool
     let report = RunReport()
+    var dataExport: DataExport?
 
     // Screenshots
     private var pendingKeyShot = false
     private let autoshot: (time: Double, url: URL)?
 
     init(view: MTKView, config: Config, seed: UInt64, autoshot: (time: Double, url: URL)?,
-         startTwoD: Bool, startColor: ColorMode) {
+         startTwoD: Bool, startColor: ColorMode, fixedPopulation: Bool = false) {
         guard let device = view.device else { fatalError("MTKView has no device") }
         guard let queue = device.makeCommandQueue() else { fatalError("No command queue") }
         self.device = device
@@ -68,6 +71,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         self.config = config
         self.autoshot = autoshot
         self.seed = seed
+        self.fixedPopulation = fixedPopulation
         self.camera = Camera(radius: config.cameraRadius, orthoHalfHeight: config.orthoHalfHeight)
 
         // Runtime-compiled shaders → two pipelines: additive lines into an HDR target, then a
@@ -125,8 +129,13 @@ final class Renderer: NSObject, MTKViewDelegate {
             camera.configure(twoD: true, defaultRadius: config.cameraRadius,
                              defaultOrtho: config.orthoHalfHeight)
         }
-        sim.spawn(upTo: config.spawnPerFrame)
-        print("[pendularium] field initialized (\(startTwoD ? "2D" : "3D"), color:\(startColor.label)) — growing")
+        spawnInitial()
+        log("[pendularium] field initialized (\(startTwoD ? "2D" : "3D"), color:\(startColor.label), " +
+            (fixedPopulation ? "\(sim.active) pendulums fixed)" : "growing)"))
+    }
+
+    private func spawnInitial() {
+        sim.spawn(upTo: fixedPopulation ? sim.capacity : config.spawnPerFrame)
     }
 
     func requestScreenshot() { pendingKeyShot = true }
@@ -153,7 +162,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         twoD = next
         trails.reset()
         sim.reset(twoD: next)
-        sim.spawn(upTo: config.spawnPerFrame)
+        spawnInitial()
         camera.configure(twoD: next, defaultRadius: config.cameraRadius, defaultOrtho: config.orthoHalfHeight)
         manualPaused = false
         emaCpuMs = 0; emaGpuMs = 0
@@ -168,15 +177,17 @@ final class Renderer: NSObject, MTKViewDelegate {
         let doc = report.document(sim: sim, config: config, seed: seed, frame: frame,
                                   segments: trails.count / 2, twoD: twoD, colorMode: colorMode)
         let ok = RunReport.write(doc, to: url)
-        print("[pendularium] report \(ok ? "saved" : "FAILED"): \(url.path)")
+        log("[pendularium] report \(ok ? "saved" : "FAILED"): \(url.path)")
         return ok
     }
+
+    func finishExport(_ export: DataExport) -> Bool { export.finish(sim) }
 
     /// Write the accumulated trail segments as a colored PLY line cloud (current color mode).
     func exportPLY(to url: URL) -> Bool {
         let verts = trails.buffer.contents().bindMemory(to: TrailVertex.self, capacity: trails.count)
         let ok = PLYExport.write(vertices: verts, count: trails.count, mode: colorMode, to: url)
-        print("[pendularium] PLY \(ok ? "saved" : "FAILED"): \(url.path) (segments=\(trails.count / 2), color:\(colorMode.label))")
+        log("[pendularium] PLY \(ok ? "saved" : "FAILED"): \(url.path) (segments=\(trails.count / 2), color:\(colorMode.label))")
         return ok
     }
 
@@ -193,11 +204,13 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         if running {
             camera.advance(dt: dt, rate: config.orbitRateRadPerSec)
-            if emaCpuMs + emaGpuMs >= config.frameBudgetMs {
+            if fixedPopulation {
+                phase = .fixed
+            } else if emaCpuMs + emaGpuMs >= config.frameBudgetMs {
                 phase = .saturated
             } else {
                 phase = .growing
-                sim.spawn(upTo: sim.active + config.spawnPerFrame)
+                sim.spawn(upTo: sim.active + config.spawnPerFrame, frame: frame)
             }
         } else {
             phase = atLimit ? .frozen : .paused
@@ -206,6 +219,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         let cpuStart = CACurrentMediaTime()
         if running {
             if frame % RunReport.sampleEveryFrames == 0 { report.sample(sim, frame: frame) }
+            dataExport?.sample(sim, frame: frame)
             sim.step()
             frame += 1
         }
@@ -309,7 +323,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             if wantKeyShot {
                 let url = URL(fileURLWithPath: "pendularium-\(Int(Date().timeIntervalSince1970)).png")
                 if Screenshot.writePNG(from: drawable.texture, to: url) {
-                    print("[pendularium] screenshot saved: \(url.path)")
+                    log("[pendularium] screenshot saved: \(url.path)")
                 }
             }
             self.inFlight.signal()
@@ -354,11 +368,11 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let shot = autoshot else { return }
         guard let tex = makeOffscreenTarget(width: width, height: height),
               renderOffscreen(into: tex, steps: max(1, Int(shot.time * 60))) else {
-            print("[pendularium] autoshot FAILED: could not render offscreen")
+            log("[pendularium] autoshot FAILED: could not render offscreen")
             NSApp.terminate(nil); return
         }
         let ok = Screenshot.writePNG(from: tex, to: shot.url)
-        print("[pendularium] autoshot \(ok ? "saved" : "FAILED") [offscreen]: \(shot.url.path) " +
+        log("[pendularium] autoshot \(ok ? "saved" : "FAILED") [offscreen]: \(shot.url.path) " +
               "(active=\(sim.active), segments=\(trails.count / 2))")
         NSApp.terminate(nil)
     }

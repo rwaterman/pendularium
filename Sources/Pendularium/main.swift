@@ -16,6 +16,10 @@ struct LaunchOptions {
     var seconds: Double?
     var report: URL?
     var exportPLY: URL?
+    var exportCSV: URL?
+    var stream: Bool
+    var every: Int
+    var pendulums: Int?
 }
 
 func parseOptions() -> LaunchOptions {
@@ -29,6 +33,10 @@ func parseOptions() -> LaunchOptions {
     var seconds: Double?
     var report: URL?
     var exportPLY: URL?
+    var exportCSV: URL?
+    var stream = false
+    var every = 6
+    var pendulums: Int?
 
     let args = Array(CommandLine.arguments.dropFirst())
     var i = 0
@@ -50,6 +58,14 @@ func parseOptions() -> LaunchOptions {
             if i + 1 < args.count { report = URL(fileURLWithPath: args[i + 1]); i += 1 }
         case "--export-ply":
             if i + 1 < args.count { exportPLY = URL(fileURLWithPath: args[i + 1]); i += 1 }
+        case "--export-csv":
+            if i + 1 < args.count { exportCSV = URL(fileURLWithPath: args[i + 1]); i += 1 }
+        case "--stream":
+            stream = true
+        case "--every":
+            if i + 1 < args.count, let v = Int(args[i + 1]) { every = v; i += 1 }
+        case "--pendulums":
+            if i + 1 < args.count, let v = Int(args[i + 1]), v > 0 { pendulums = v; i += 1 }
         case "--mem-mb":
             if i + 1 < args.count, let v = Int(args[i + 1]) { memMB = v; i += 1 }
         case "--2d":
@@ -89,7 +105,8 @@ func parseOptions() -> LaunchOptions {
     }
     return LaunchOptions(seed: seed, seedWasGiven: seedGiven, autoshot: autoshot,
                          trailMemoryMB: memMB, twoD: twoD, colorMode: colorMode,
-                         record: record, seconds: seconds, report: report, exportPLY: exportPLY)
+                         record: record, seconds: seconds, report: report, exportPLY: exportPLY,
+                         exportCSV: exportCSV, stream: stream, every: every, pendulums: pendulums)
 }
 
 // MARK: - View (input + Metal surface)
@@ -138,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         var config = Config()
         if let mem = options.trailMemoryMB { config.trailMemoryMB = mem }
+        if let n = options.pendulums { config.maxPendulums = n }
 
         let frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
         view = PendulumView(frame: frame, device: device)
@@ -147,11 +165,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.framebufferOnly = false   // allow screenshot readback
 
         renderer = Renderer(view: view, config: config, seed: options.seed, autoshot: options.autoshot,
-                            startTwoD: options.twoD, startColor: options.colorMode)
+                            startTwoD: options.twoD, startColor: options.colorMode,
+                            fixedPopulation: options.pendulums != nil)
         view.delegate = renderer
         view.renderer = renderer
 
-        print("[pendularium] seed = \(options.seed)\(options.seedWasGiven ? " (given)" : " (random)")")
+        log("[pendularium] seed = \(options.seed)\(options.seedWasGiven ? " (given)" : " (random)")")
+
+        if let dir = options.exportCSV {
+            guard let export = DataExport(sink: .csv(directory: dir), every: options.every) else { exit(1) }
+            renderer.dataExport = export
+        } else if options.stream {
+            renderer.dataExport = DataExport(sink: .jsonl(FileHandle.standardOutput), every: options.every)
+        }
 
         hud = NSTextField(labelWithString: "")
         hud.frame = NSRect(x: 12, y: frame.height - 58, width: 960, height: 46)
@@ -204,13 +230,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .gif(let u): seconds = options.seconds ?? 10; width = 640; height = 400; url = u
         }
         let ok = Recorder.run(renderer: renderer, output: output, seconds: seconds, width: width, height: height)
-        print("[pendularium] demo \(ok ? "saved" : "FAILED"): \(url.path)")
+        log("[pendularium] demo \(ok ? "saved" : "FAILED"): \(url.path)")
         if !ok { exit(1) }
         NSApp.terminate(nil)
     }
 
-    /// `--report` / `--export-ply` apply to whatever the run accumulated, in every mode.
+    /// `--report` / `--export-*` apply to whatever the run accumulated, in every mode.
     func applicationWillTerminate(_ notification: Notification) {
+        if let export = renderer.dataExport, !renderer.finishExport(export) { exit(1) }
         if let url = options.report, !renderer.writeReport(to: url) { exit(1) }
         if let url = options.exportPLY, !renderer.exportPLY(to: url) { exit(1) }
     }

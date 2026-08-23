@@ -46,11 +46,14 @@ final class RunReport {
                  lyapunovPerSecond: RunReport.lyapunov(samples), samples: samples)
     }
 
-    /// Least-squares slope of mean log separation vs time over the pre-saturation samples
-    /// (separation under ~0.5 rad). Needs at least three such samples.
+    /// Least-squares slope of mean log separation vs time over the exponential stretch: after
+    /// the separation has grown e-fold from its first value (the twins start at rest, so the
+    /// first fraction of a second is slower than the asymptotic rate) and before it saturates
+    /// (~0.1 rad, where growth visibly bends). Needs at least three such samples.
     static func lyapunov(_ samples: [Sample]) -> Float? {
+        guard let first = samples.first?.meanLogSeparation else { return nil }
         let pts = samples.compactMap { s -> (Float, Float)? in
-            guard let v = s.meanLogSeparation, v < log(0.5) else { return nil }
+            guard let v = s.meanLogSeparation, v > first + 1, v < log(0.1) else { return nil }
             return (s.t, v)
         }
         guard pts.count >= 3 else { return nil }

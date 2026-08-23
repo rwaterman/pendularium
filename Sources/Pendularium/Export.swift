@@ -106,7 +106,7 @@ enum PLYExport {
                 start += n
             }
         } catch {
-            print("[pendularium] PLY write failed: \(error)")
+            log("[pendularium] PLY write failed: \(error)")
             return false
         }
         return true
