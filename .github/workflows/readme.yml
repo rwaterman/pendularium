@@ -1,0 +1,33 @@
+name: README checks
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 14 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  markdownlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DavidAnson/markdownlint-cli2-action@v20
+        with:
+          globs: "**/*.md"
+  links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          # Release assets only exist once a release is published, so the demo
+          # download link is owned by the release process, not this check.
+          args: --no-progress --exclude 'releases/latest/download' '**/*.md'
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
