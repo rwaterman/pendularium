@@ -1,5 +1,10 @@
 # Pendularium
 
+> [!NOTE]
+> **AI disclosure.** Built with generative AI assistance (Claude Code by Anthropic). The concept,
+> direction, and review are my own; the AI drafted most of the code, tests, and this README, and
+> I review everything before it ships. Commits carry a `Co-Authored-By` trailer for the model.
+
 A native macOS generative-art engine that paints a zoomed-out, fractal-like image from a field
 of **chaotic double pendulums** swinging in 3D. Every run is seeded differently, so no two images
 are alike. Built in Swift + Metal, runnable straight from the terminal.
