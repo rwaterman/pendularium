@@ -54,7 +54,7 @@ enum Recorder {
             sink = GIFSink(url: url, frameCount: frameCount, fps: fps)
         }
         guard let sink, let target = renderer.makeOffscreenTarget(width: width, height: height) else {
-            print("[pendularium] record FAILED: could not open output or offscreen target")
+            log("[pendularium] record FAILED: could not open output or offscreen target")
             return false
         }
         let simStepsPerFrame = 60 / fps
@@ -75,7 +75,7 @@ enum Recorder {
             let captionAlpha = max(0, min(1, (captionUntil - t) / 0.5))
             let image = compose(raw, hud: hudLine(renderer.stats), caption: caption, captionAlpha: captionAlpha)
             guard sink.append(image, frame: frame) else { return false }
-            if frame % fps == 0 { print("[pendularium] recording \(Int(t))s / \(Int(seconds))s") }
+            if frame % fps == 0 { log("[pendularium] recording \(Int(t))s / \(Int(seconds))s") }
         }
         return sink.finish()
     }
@@ -191,7 +191,7 @@ private final class VideoSink: FrameSink {
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
         done.wait()
-        if let error = writer.error { print("[pendularium] video FAILED: \(error)") }
+        if let error = writer.error { log("[pendularium] video FAILED: \(error)") }
         return writer.status == .completed
     }
 }

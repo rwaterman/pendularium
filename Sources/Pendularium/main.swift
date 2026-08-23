@@ -14,6 +14,12 @@ struct LaunchOptions {
     var colorMode: ColorMode
     var record: Recorder.Output?
     var seconds: Double?
+    var report: URL?
+    var exportPLY: URL?
+    var exportCSV: URL?
+    var stream: Bool
+    var every: Int
+    var pendulums: Int?
 }
 
 func parseOptions() -> LaunchOptions {
@@ -25,6 +31,12 @@ func parseOptions() -> LaunchOptions {
     var colorMode: ColorMode = .speed
     var record: Recorder.Output?
     var seconds: Double?
+    var report: URL?
+    var exportPLY: URL?
+    var exportCSV: URL?
+    var stream = false
+    var every = 6
+    var pendulums: Int?
 
     let args = Array(CommandLine.arguments.dropFirst())
     var i = 0
@@ -42,6 +54,18 @@ func parseOptions() -> LaunchOptions {
             if i + 1 < args.count { record = .gif(URL(fileURLWithPath: args[i + 1])); i += 1 }
         case "--seconds":
             if i + 1 < args.count, let v = Double(args[i + 1]) { seconds = v; i += 1 }
+        case "--report":
+            if i + 1 < args.count { report = URL(fileURLWithPath: args[i + 1]); i += 1 }
+        case "--export-ply":
+            if i + 1 < args.count { exportPLY = URL(fileURLWithPath: args[i + 1]); i += 1 }
+        case "--export-csv":
+            if i + 1 < args.count { exportCSV = URL(fileURLWithPath: args[i + 1]); i += 1 }
+        case "--stream":
+            stream = true
+        case "--every":
+            if i + 1 < args.count, let v = Int(args[i + 1]) { every = v; i += 1 }
+        case "--pendulums":
+            if i + 1 < args.count, let v = Int(args[i + 1]), v > 0 { pendulums = v; i += 1 }
         case "--mem-mb":
             if i + 1 < args.count, let v = Int(args[i + 1]) { memMB = v; i += 1 }
         case "--2d":
@@ -64,11 +88,14 @@ func parseOptions() -> LaunchOptions {
               --record <path.mp4>      render the scripted demo to an H.264 video, then quit
               --gif <path.gif>         render the scripted demo to a looping GIF, then quit
               --seconds <n>            demo length for --record (default 25) / --gif (default 10)
+              --report <path.json>     write the run report (measurements + seed) on exit
+              --export-ply <path.ply>  write the trail segments as a colored PLY on exit
               --mem-mb <int>           trail memory cap (default 192)
               --2d                     start in 2D mode
               --color <speed|identity|phase>   start color mode
             Controls: drag/scroll = move, D = 2D/3D, C = color mode, Space = pause,
-                      S = screenshot, Q = quit. Pauses automatically once at the limit.
+                      S = screenshot, R = report, P = PLY export, Q = quit.
+                      Pauses automatically once at the limit.
             """)
             exit(0)
         default:
@@ -78,7 +105,8 @@ func parseOptions() -> LaunchOptions {
     }
     return LaunchOptions(seed: seed, seedWasGiven: seedGiven, autoshot: autoshot,
                          trailMemoryMB: memMB, twoD: twoD, colorMode: colorMode,
-                         record: record, seconds: seconds)
+                         record: record, seconds: seconds, report: report, exportPLY: exportPLY,
+                         exportCSV: exportCSV, stream: stream, every: every, pendulums: pendulums)
 }
 
 // MARK: - View (input + Metal surface)
@@ -90,6 +118,8 @@ final class PendulumView: MTKView {
     override func keyDown(with event: NSEvent) {
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "s": renderer?.requestScreenshot()
+        case "r": _ = renderer?.writeReport(to: URL(fileURLWithPath: "pendularium-\(Int(Date().timeIntervalSince1970)).json"))
+        case "p": _ = renderer?.exportPLY(to: URL(fileURLWithPath: "pendularium-\(Int(Date().timeIntervalSince1970)).ply"))
         case "q": NSApp.terminate(nil)
         case "d": renderer?.toggleDimension()
         case "c": renderer?.cycleColorMode()
@@ -125,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         var config = Config()
         if let mem = options.trailMemoryMB { config.trailMemoryMB = mem }
+        if let n = options.pendulums { config.maxPendulums = n }
 
         let frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
         view = PendulumView(frame: frame, device: device)
@@ -134,14 +165,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.framebufferOnly = false   // allow screenshot readback
 
         renderer = Renderer(view: view, config: config, seed: options.seed, autoshot: options.autoshot,
-                            startTwoD: options.twoD, startColor: options.colorMode)
+                            startTwoD: options.twoD, startColor: options.colorMode,
+                            fixedPopulation: options.pendulums != nil)
         view.delegate = renderer
         view.renderer = renderer
 
-        print("[pendularium] seed = \(options.seed)\(options.seedWasGiven ? " (given)" : " (random)")")
+        log("[pendularium] seed = \(options.seed)\(options.seedWasGiven ? " (given)" : " (random)")")
+
+        if let dir = options.exportCSV {
+            guard let export = DataExport(sink: .csv(directory: dir), every: options.every) else { exit(1) }
+            renderer.dataExport = export
+        } else if options.stream {
+            renderer.dataExport = DataExport(sink: .jsonl(FileHandle.standardOutput), every: options.every)
+        }
 
         hud = NSTextField(labelWithString: "")
-        hud.frame = NSRect(x: 12, y: frame.height - 58, width: 760, height: 46)
+        hud.frame = NSRect(x: 12, y: frame.height - 58, width: 960, height: 46)
         hud.autoresizingMask = [.maxXMargin, .minYMargin]
         hud.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         hud.textColor = NSColor(white: 0.85, alpha: 0.9)
@@ -151,7 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let seed = options.seed
         renderer.onStats = { [weak self] s in
             self?.hud.stringValue = String(
-                format: "[%@]  color:%@   pendulums %d   segments %d   cpu %.1fms gpu %.1fms   %@\ndrag/scroll=move  D=2D/3D  C=color  Space=pause  S=shot  Q=quit   seed %llu",
+                format: "[%@]  color:%@   pendulums %d   segments %d   cpu %.1fms gpu %.1fms   %@\ndrag/scroll=move  D=2D/3D  C=color  Space=pause  S=shot  R=report  P=ply  Q=quit   seed %llu",
                 s.twoD ? "2D" : "3D", s.colorMode, s.active, s.segments,
                 s.cpuMs, s.gpuMs, s.phase.rawValue, seed)
         }
@@ -191,8 +230,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .gif(let u): seconds = options.seconds ?? 10; width = 640; height = 400; url = u
         }
         let ok = Recorder.run(renderer: renderer, output: output, seconds: seconds, width: width, height: height)
-        print("[pendularium] demo \(ok ? "saved" : "FAILED"): \(url.path)")
-        exit(ok ? 0 : 1)
+        log("[pendularium] demo \(ok ? "saved" : "FAILED"): \(url.path)")
+        if !ok { exit(1) }
+        NSApp.terminate(nil)
+    }
+
+    /// `--report` / `--export-*` apply to whatever the run accumulated, in every mode.
+    func applicationWillTerminate(_ notification: Notification) {
+        if let export = renderer.dataExport, !renderer.finishExport(export) { exit(1) }
+        if let url = options.report, !renderer.writeReport(to: url) { exit(1) }
+        if let url = options.exportPLY, !renderer.exportPLY(to: url) { exit(1) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

@@ -1,3 +1,4 @@
+import Foundation
 import simd
 
 /// One vertex in a line buffer. Laid out to match the Metal `TrailVertex` struct
@@ -45,4 +46,29 @@ enum ColorMode: Int, CaseIterable {
 struct Uniforms {
     var mvp: simd_float4x4
     var modeParams: SIMD4<Float>  // x = colorMode (as float), y,z,w spare
+}
+
+/// Per-pendulum constants, fixed at spawn.
+struct PendulumRecord {
+    var id: Int
+    var spawnFrame: Int
+    var pivot: SIMD3<Float>
+    var l1, l2, m1, m2: Float
+    var theta1_0, theta2_0: Float
+    var hue: Float
+    var energy: Float
+    var twinOf: Int?
+}
+
+/// Per-pendulum state at one sampled frame.
+struct StateRecord {
+    var id: Int
+    var theta1, theta2, omega1, omega2: Float
+    var speed: Float
+    var tip: SIMD3<Float>
+}
+
+/// Log lines go to stderr so `--stream` can own stdout.
+func log(_ message: String) {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
 }
